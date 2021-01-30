@@ -234,6 +234,7 @@ import java.util.HashSet;
 import java.util.List;
 
 import com.android.internal.util.custom.NavbarUtils;
+import com.android.internal.custom.hardware.LineageHardwareManager;
 
 /**
  * WindowManagerPolicy implementation for the Android phone UI.  This
@@ -668,6 +669,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     // Custom additions
     private static final int MSG_CAMERA_LONG_PRESS = 101;
 
+    private LineageHardwareManager mLineageHardware;
+
     private class PolicyHandler extends Handler {
         @Override
         public void handleMessage(Message msg) {
@@ -856,6 +859,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             resolver.registerContentObserver(Settings.System.getUriFor(
                     Settings.System.CAMERA_LAUNCH), false, this,
                     UserHandle.USER_ALL);
+            if (mLineageHardware.isSupported(LineageHardwareManager.FEATURE_KEY_SWAP)) {
+                resolver.registerContentObserver(Settings.Secure.getUriFor(
+                        Settings.Secure.SWAP_CAPACITIVE_KEYS), false, this,
+                        UserHandle.USER_ALL);
+            }
 
             updateSettings();
         }
@@ -1942,7 +1950,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         mHandler = new PolicyHandler();
         mWakeGestureListener = new MyWakeGestureListener(mContext, mHandler);
         mSettingsObserver = new SettingsObserver(mHandler);
-        mSettingsObserver.observe();
+
         mShortcutManager = new ShortcutManager(context);
         mUiMode = context.getResources().getInteger(
                 com.android.internal.R.integer.config_defaultUiModeType);
@@ -2232,7 +2240,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         int mDeviceHardwareWakeKeys = mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_deviceHardwareWakeKeys);
         synchronized (mLock) {
-            mHasNavigationBar = NavbarUtils.isEnabled(mContext);
+            boolean hasNavigationBar = NavbarUtils.isEnabled(mContext);
+            if (hasNavigationBar != mHasNavigationBar){
+                mHasNavigationBar = hasNavigationBar;
+                if (mLineageHardware.isSupported(LineageHardwareManager.FEATURE_KEY_DISABLE)) {
+                    mLineageHardware.set(LineageHardwareManager.FEATURE_KEY_DISABLE, mHasNavigationBar);
+                }
+            }
+
             mEndcallBehavior = Settings.System.getIntForUser(resolver,
                     Settings.System.END_BUTTON_BEHAVIOR,
                     Settings.System.END_BUTTON_BEHAVIOR_DEFAULT,
@@ -2319,6 +2334,16 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (updateRotation) {
             updateRotation(true);
         }
+        updateKeySwapper();
+    }
+
+    private void updateKeySwapper(){
+        if (!mLineageHardware.isSupported(LineageHardwareManager.FEATURE_KEY_SWAP)) {
+            return;
+        }
+        final boolean enabled = Settings.Secure.getInt(mContext.getContentResolver(),
+                Settings.Secure.SWAP_CAPACITIVE_KEYS, 0) == 1;
+        mLineageHardware.set(LineageHardwareManager.FEATURE_KEY_SWAP, enabled);
     }
 
     private void updateWakeGestureListenerLp() {
@@ -5311,6 +5336,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (mVrManagerInternal != null) {
             mVrManagerInternal.addPersistentVrModeStateListener(mPersistentVrModeListener);
         }
+
+        mLineageHardware = LineageHardwareManager.getInstance(mContext);
+        // Ensure observe happens in systemReady() since we need
+        // LineageHardwareService to be up and running
+        mSettingsObserver.observe();
 
         readCameraLensCoverState();
         updateUiMode();
